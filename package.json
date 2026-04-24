@@ -1,0 +1,88 @@
+{
+  "name": "vscode-codex-ralphy",
+  "displayName": "Codex Ralphy Loop",
+  "description": "Runs a Ralph loop in VS Code by repeatedly invoking Codex with a workspace prompt.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:ralphy.startLoop",
+    "onCommand:ralphy.continueLoop",
+    "onCommand:ralphy.runIteration",
+    "onCommand:ralphy.stopLoop"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ralphy.startLoop",
+        "title": "Ralphy: Start Ralph Loop",
+        "category": "Ralphy"
+      },
+      {
+        "command": "ralphy.continueLoop",
+        "title": "Ralphy: Continue Ralph Loop",
+        "category": "Ralphy"
+      },
+      {
+        "command": "ralphy.runIteration",
+        "title": "Ralphy: Run One Ralph Iteration",
+        "category": "Ralphy"
+      },
+      {
+        "command": "ralphy.stopLoop",
+        "title": "Ralphy: Stop Ralph Loop",
+        "category": "Ralphy"
+      }
+    ],
+    "configuration": {
+      "title": "Ralphy",
+      "properties": {
+        "ralphy.taskPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional workspace-relative default task file used if a task picker is cancelled."
+        },
+        "ralphy.codexCommand": {
+          "type": "string",
+          "default": "codex",
+          "description": "Command used to start the Codex CLI."
+        },
+        "ralphy.codexArgs": {
+          "type": "array",
+          "default": [
+            "exec",
+            "--cd",
+            "${workspaceFolder}",
+            "-"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments passed to the Codex command. Supports ${workspaceFolder}, ${promptPath}, and ${prompt}."
+        },
+        "ralphy.sendPromptToStdin": {
+          "type": "boolean",
+          "default": true,
+          "description": "Send the prompt file contents to Codex over stdin. The default arguments use `-` so Codex reads stdin."
+        },
+        "ralphy.maxIterations": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "Maximum number of Codex iterations to run when starting the loop."
+        },
+        "ralphy.stopWhenNoGapRemaining": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stop the loop when the iteration summary says the highest-value gap remaining is none."
+        }
+      }
+    }
+  }
+}

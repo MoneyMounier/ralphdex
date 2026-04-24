@@ -1,0 +1,456 @@
+const vscode = require('vscode');
+const fs = require('fs/promises');
+const path = require('path');
+const { spawn } = require('child_process');
+
+let activeRun = undefined;
+let extensionRoot = undefined;
+
+function activate(context) {
+  extensionRoot = context.extensionUri.fsPath;
+  const output = vscode.window.createOutputChannel('Ralphy');
+  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  status.command = 'ralphy.startLoop';
+  status.text = '$(sync) Ralphy';
+  status.tooltip = 'Start Ralph loop';
+  status.show();
+
+  context.subscriptions.push(output, status);
+  context.subscriptions.push(vscode.commands.registerCommand('ralphy.startLoop', () => startLoop(output, status)));
+  context.subscriptions.push(vscode.commands.registerCommand('ralphy.continueLoop', () => continueLoop(output, status)));
+  context.subscriptions.push(vscode.commands.registerCommand('ralphy.runIteration', () => runSingleIteration(output, status)));
+  context.subscriptions.push(vscode.commands.registerCommand('ralphy.stopLoop', () => stopLoop(output, status)));
+}
+
+function deactivate() {
+  if (activeRun) {
+    activeRun.cancel();
+  }
+}
+
+async function startLoop(output, status) {
+  return await runLoopCommand(output, status, false);
+}
+
+async function continueLoop(output, status) {
+  return await runLoopCommand(output, status, true);
+}
+
+async function runLoopCommand(output, status, isContinuation) {
+  if (activeRun) {
+    vscode.window.showWarningMessage('Ralphy is already running.');
+    return;
+  }
+
+  const workspaceFolder = getWorkspaceFolder();
+  if (!workspaceFolder) {
+    return;
+  }
+
+  const config = vscode.workspace.getConfiguration('ralphy');
+  const loopOptions = await promptForLoopOptions(workspaceFolder.fsPath, config);
+  if (!loopOptions) {
+    return;
+  }
+
+  const lastIterationOutput = isContinuation ? await promptForLastIterationOutput(workspaceFolder.fsPath) : undefined;
+  if (isContinuation && lastIterationOutput === undefined) {
+    return;
+  }
+
+  const { taskFilePath, maxIterations } = loopOptions;
+  const stopWhenNoGapRemaining = config.get('stopWhenNoGapRemaining', true);
+  const runner = createRunner(output, status);
+  activeRun = runner;
+
+  output.show(true);
+  output.appendLine(`${isContinuation ? 'Continuing' : 'Starting'} Ralph loop in ${workspaceFolder.fsPath}`);
+  output.appendLine(`Task file: ${taskFilePath}`);
+  output.appendLine(`Max iterations: ${maxIterations}`);
+  if (isContinuation) {
+    output.appendLine('Last iteration output: provided');
+  }
+  status.text = '$(sync~spin) Ralphy running';
+
+  try {
+    let currentLastIterationOutput = lastIterationOutput;
+    for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+      runner.throwIfCancelled();
+      const result = await runIteration(workspaceFolder.fsPath, iteration, output, runner, taskFilePath, currentLastIterationOutput);
+      runner.throwIfCancelled();
+      if (result.exitCode !== 0) {
+        vscode.window.showErrorMessage(`Ralphy stopped after iteration ${iteration}; Codex exited with ${result.exitCode}.`);
+        return;
+      }
+
+      currentLastIterationOutput = extractIterationSummary(result.output) || result.output;
+
+      if (stopWhenNoGapRemaining && hasNoGapRemaining(result.output)) {
+        output.appendLine('Stopping because the iteration summary reports no highest-value gap remaining.');
+        vscode.window.showInformationMessage(`Ralphy completed after ${iteration} iteration(s).`);
+        return;
+      }
+    }
+
+    vscode.window.showInformationMessage(`Ralphy reached the configured limit of ${maxIterations} iteration(s).`);
+  } catch (error) {
+    if (error && error.name === 'RalphyCancelled') {
+      output.appendLine('Ralphy loop stopped by user.');
+      vscode.window.showInformationMessage('Ralphy loop stopped.');
+      return;
+    }
+
+    output.appendLine(`Ralphy failed: ${formatError(error)}`);
+    vscode.window.showErrorMessage(`Ralphy failed: ${formatError(error)}`);
+  } finally {
+    activeRun = undefined;
+    status.text = '$(sync) Ralphy';
+  }
+}
+
+async function runSingleIteration(output, status) {
+  if (activeRun) {
+    vscode.window.showWarningMessage('Ralphy is already running.');
+    return;
+  }
+
+  const workspaceFolder = getWorkspaceFolder();
+  if (!workspaceFolder) {
+    return;
+  }
+
+  const config = vscode.workspace.getConfiguration('ralphy');
+  const taskFilePath = await promptForTaskFile(workspaceFolder.fsPath, config);
+  if (!taskFilePath) {
+    return;
+  }
+
+  const runner = createRunner(output, status);
+  activeRun = runner;
+  output.show(true);
+  output.appendLine(`Running one Ralph iteration in ${workspaceFolder.fsPath}`);
+  output.appendLine(`Task file: ${taskFilePath}`);
+  status.text = '$(sync~spin) Ralphy running';
+
+  try {
+    const result = await runIteration(workspaceFolder.fsPath, 1, output, runner, taskFilePath);
+    runner.throwIfCancelled();
+    if (result.exitCode === 0) {
+      vscode.window.showInformationMessage('Ralphy iteration completed.');
+    } else {
+      vscode.window.showErrorMessage(`Ralphy iteration failed; Codex exited with ${result.exitCode}.`);
+    }
+  } catch (error) {
+    if (error && error.name === 'RalphyCancelled') {
+      output.appendLine('Ralphy iteration stopped by user.');
+      vscode.window.showInformationMessage('Ralphy iteration stopped.');
+      return;
+    }
+
+    output.appendLine(`Ralphy failed: ${formatError(error)}`);
+    vscode.window.showErrorMessage(`Ralphy failed: ${formatError(error)}`);
+  } finally {
+    activeRun = undefined;
+    status.text = '$(sync) Ralphy';
+  }
+}
+
+function stopLoop(output, status) {
+  if (!activeRun) {
+    vscode.window.showInformationMessage('Ralphy is not running.');
+    return;
+  }
+
+  activeRun.cancel();
+  output.appendLine('Stopping Ralphy after the current Codex process exits.');
+  status.text = '$(debug-stop) Ralphy stopping';
+}
+
+async function runIteration(workspaceFolder, iteration, output, runner, taskFilePath, lastIterationOutput) {
+  const config = vscode.workspace.getConfiguration('ralphy');
+  const promptPath = getBundledPromptPath();
+  const prompt = await buildPrompt(promptPath, workspaceFolder, taskFilePath, lastIterationOutput);
+  const command = config.get('codexCommand', 'codex');
+  const sendPromptToStdin = config.get('sendPromptToStdin', true);
+  const args = config.get('codexArgs', ['exec', '--cd', '${workspaceFolder}', '-'])
+    .map((arg) => arg
+      .replaceAll('${workspaceFolder}', workspaceFolder)
+      .replaceAll('${promptPath}', promptPath)
+      .replaceAll('${prompt}', prompt));
+
+  output.appendLine('');
+  output.appendLine(`=== Ralph iteration ${iteration} ===`);
+  output.appendLine(`Prompt: ${promptPath}`);
+  output.appendLine(`Task: ${taskFilePath}`);
+  output.appendLine(`Command: ${command} ${args.map(quoteForLog).join(' ')}`);
+
+  return await spawnCodex(command, args, workspaceFolder, output, runner, sendPromptToStdin ? prompt : undefined);
+}
+
+async function promptForLoopOptions(workspaceFolder, config) {
+  const taskFilePath = await promptForTaskFile(workspaceFolder, config);
+  if (!taskFilePath) {
+    return undefined;
+  }
+
+  const maxIterations = await promptForIterationCount(config);
+  if (!maxIterations) {
+    return undefined;
+  }
+
+  return { taskFilePath, maxIterations };
+}
+
+async function promptForTaskFile(workspaceFolder, config) {
+  const selected = await vscode.window.showOpenDialog({
+    title: 'Select Ralph loop task file',
+    defaultUri: vscode.Uri.file(workspaceFolder),
+    canSelectFiles: true,
+    canSelectFolders: false,
+    canSelectMany: false,
+    filters: {
+      'Task files': ['md', 'txt'],
+      'All files': ['*']
+    }
+  });
+
+  if (selected && selected[0]) {
+    return selected[0].fsPath;
+  }
+
+  const fallback = config.get('taskPath', '');
+  if (!fallback) {
+    return undefined;
+  }
+
+  return path.resolve(workspaceFolder, fallback);
+}
+
+async function promptForIterationCount(config) {
+  const configuredDefault = String(config.get('maxIterations', 5));
+  const value = await vscode.window.showInputBox({
+    title: 'Ralph loop iterations',
+    prompt: 'How many fresh Codex iterations should Ralphy run?',
+    value: configuredDefault,
+    validateInput(input) {
+      const parsed = Number(input);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        return 'Enter a whole number greater than zero.';
+      }
+
+      return undefined;
+    }
+  });
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return Number(value);
+}
+
+async function promptForLastIterationOutput(workspaceFolder) {
+  const activeEditor = vscode.window.activeTextEditor;
+  const selectedText = activeEditor ? activeEditor.document.getText(activeEditor.selection).trim() : '';
+
+  if (selectedText) {
+    const choice = await vscode.window.showQuickPick([
+      {
+        label: 'Use Selected Text',
+        description: 'Use the active editor selection as the last iteration output'
+      },
+      {
+        label: 'Choose Output File',
+        description: 'Read the last iteration output from a file'
+      }
+    ], {
+      title: 'Last iteration output',
+      placeHolder: 'Choose where Ralphy should read the previous iteration output from'
+    });
+
+    if (!choice) {
+      return undefined;
+    }
+
+    if (choice.label === 'Use Selected Text') {
+      return selectedText;
+    }
+  }
+
+  const selected = await vscode.window.showOpenDialog({
+    title: 'Select last iteration output file',
+    defaultUri: vscode.Uri.file(workspaceFolder),
+    canSelectFiles: true,
+    canSelectFolders: false,
+    canSelectMany: false,
+    filters: {
+      'Text files': ['md', 'txt', 'log'],
+      'All files': ['*']
+    }
+  });
+
+  if (!selected || !selected[0]) {
+    return undefined;
+  }
+
+  return await fs.readFile(selected[0].fsPath, 'utf8');
+}
+
+async function buildPrompt(promptPath, workspaceFolder, taskFilePath, lastIterationOutput) {
+  const basePrompt = await fs.readFile(promptPath, 'utf8');
+  const taskFile = toWorkspacePath(path.relative(workspaceFolder, taskFilePath));
+  const prompt = basePrompt.replaceAll('<taskfile>', taskFile);
+
+  if (!lastIterationOutput) {
+    return prompt;
+  }
+
+  return `${prompt.trimEnd()}
+
+## Last iteration output
+
+${lastIterationOutput.trim()}
+`;
+}
+
+function spawnCodex(command, args, cwd, output, runner, stdinText) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env: process.env,
+      shell: process.platform === 'win32'
+    });
+
+    runner.setChild(child);
+    let combinedOutput = '';
+
+    if (stdinText !== undefined && child.stdin) {
+      child.stdin.end(stdinText);
+    }
+
+    child.stdout.on('data', (chunk) => {
+      const text = chunk.toString();
+      combinedOutput += text;
+      output.append(text);
+    });
+
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString();
+      combinedOutput += text;
+      output.append(text);
+    });
+
+    child.on('error', reject);
+    child.on('close', (exitCode) => {
+      runner.clearChild(child);
+      output.appendLine('');
+      output.appendLine(`Codex exited with ${exitCode}.`);
+      resolve({ exitCode, output: combinedOutput });
+    });
+  });
+}
+
+function createRunner(output, status) {
+  let cancelled = false;
+  let child = undefined;
+
+  return {
+    setChild(nextChild) {
+      child = nextChild;
+      if (cancelled) {
+        killChild(child);
+      }
+    },
+    clearChild(oldChild) {
+      if (child === oldChild) {
+        child = undefined;
+      }
+    },
+    cancel() {
+      cancelled = true;
+      status.text = '$(debug-stop) Ralphy stopping';
+      if (child) {
+        output.appendLine('Terminating active Codex process.');
+        killChild(child);
+      }
+    },
+    throwIfCancelled() {
+      if (cancelled) {
+        const error = new Error('Ralphy cancelled');
+        error.name = 'RalphyCancelled';
+        throw error;
+      }
+    }
+  };
+}
+
+function killChild(child) {
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { shell: true });
+    return;
+  }
+
+  child.kill('SIGTERM');
+}
+
+function getWorkspaceFolder() {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    vscode.window.showErrorMessage('Open a workspace folder before running Ralphy.');
+    return undefined;
+  }
+
+  if (folders.length > 1) {
+    vscode.window.showWarningMessage(`Ralphy is using ${folders[0].name}. Multi-root selection is not implemented yet.`);
+  }
+
+  return folders[0].uri;
+}
+
+function hasNoGapRemaining(output) {
+  const match = output.match(/Highest-value gap remaining for the next iteration:\s*(.+)/i);
+  if (!match) {
+    return false;
+  }
+
+  return /^(none|n\/a|nothing|no gap|no remaining gap)\.?$/i.test(match[1].trim());
+}
+
+function extractIterationSummary(output) {
+  const marker = '## Iteration summary';
+  const index = output.lastIndexOf(marker);
+  if (index === -1) {
+    return undefined;
+  }
+
+  return output.slice(index).trim();
+}
+
+function quoteForLog(value) {
+  if (/^[A-Za-z0-9_./:=\\-]+$/.test(value)) {
+    return value;
+  }
+
+  return JSON.stringify(value);
+}
+
+function toWorkspacePath(value) {
+  return value.split(path.sep).join('/');
+}
+
+function getBundledPromptPath() {
+  return path.join(extensionRoot || __dirname, 'plan-implement.md');
+}
+
+function formatError(error) {
+  if (!error) {
+    return 'unknown error';
+  }
+
+  return error.message || String(error);
+}
+
+module.exports = {
+  activate,
+  deactivate
+};
