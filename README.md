@@ -5,7 +5,7 @@ This VS Code extension runs a Ralph loop by repeatedly starting fresh Codex CLI 
 ## Commands
 
 - `Ralphy: Start Ralph Loop` runs up to `ralphy.maxIterations` iterations.
-- `Ralphy: Continue Ralph Loop` asks for the same inputs as start, plus the previous iteration output.
+- `Ralphy: Continue Ralph Loop` asks for the same inputs as start, then resumes from the matching progress ledger.
 - `Ralphy: Run One Ralph Iteration` runs one fresh Codex iteration.
 - `Ralphy: Stop Ralph Loop` terminates the active Codex process and stops the loop.
 
@@ -16,11 +16,11 @@ When you start a loop, Ralphy asks for:
 - the task file Codex should work from
 - the number of fresh Codex iterations to run
 
-When you continue a loop, Ralphy also asks for the last iteration output. If text is selected in the active editor, it can use that selection; otherwise it asks for an output file.
+When you continue a loop, Ralphy loads the matching progress ledger beside the selected task file. If the ledger does not exist, the command exits with an error.
 
 Ralphy inserts the selected task file into every `<taskfile>` placeholder in the bundled `plan-implement.md` before sending the prompt to Codex.
 It also creates a progress ledger beside the task file named `<task-name>.ralphy-progress.md`, inserts that path into every `<progressfile>` placeholder, and appends each captured iteration summary to the ledger.
-For continued loops, it appends the supplied handoff under `## Last iteration output`. After each successful iteration, Ralphy passes that iteration's summary into the next fresh Codex run.
+For continued loops, it appends the loaded ledger under `## Last iteration output`. After each successful iteration, Ralphy passes that iteration's summary into the next fresh Codex run.
 
 ## Settings
 

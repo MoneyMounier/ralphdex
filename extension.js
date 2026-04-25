@@ -53,16 +53,16 @@ async function runLoopCommand(output, status, isContinuation) {
     return;
   }
 
-  const lastIterationOutput = isContinuation ? await promptForLastIterationOutput(workspaceFolder.fsPath) : undefined;
-  if (isContinuation && lastIterationOutput === undefined) {
-    return;
-  }
-
   const { taskFilePath, maxIterations } = loopOptions;
   const progressFilePath = getProgressFilePath(taskFilePath);
-  await ensureProgressFile(workspaceFolder.fsPath, taskFilePath, progressFilePath);
-  if (lastIterationOutput) {
-    await appendContinuationSeed(progressFilePath, lastIterationOutput);
+  if (isContinuation) {
+    const hasProgressFile = await fileExists(progressFilePath);
+    if (!hasProgressFile) {
+      vscode.window.showErrorMessage(`Cannot continue Ralph loop because no progress ledger exists at ${progressFilePath}.`);
+      return;
+    }
+  } else {
+    await ensureProgressFile(workspaceFolder.fsPath, taskFilePath, progressFilePath);
   }
 
   const stopWhenNoGapRemaining = config.get('stopWhenNoGapRemaining', true);
@@ -75,12 +75,12 @@ async function runLoopCommand(output, status, isContinuation) {
   output.appendLine(`Progress file: ${progressFilePath}`);
   output.appendLine(`Max iterations: ${maxIterations}`);
   if (isContinuation) {
-    output.appendLine('Last iteration output: provided');
+    output.appendLine('Last iteration output: loaded from progress ledger');
   }
   status.text = '$(sync~spin) Ralphy running';
 
   try {
-    let currentLastIterationOutput = lastIterationOutput;
+    let currentLastIterationOutput = isContinuation ? await fs.readFile(progressFilePath, 'utf8') : undefined;
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       runner.throwIfCancelled();
       const result = await runIteration(workspaceFolder.fsPath, iteration, output, runner, taskFilePath, progressFilePath, currentLastIterationOutput);
@@ -264,53 +264,6 @@ async function promptForIterationCount(config) {
   return Number(value);
 }
 
-async function promptForLastIterationOutput(workspaceFolder) {
-  const activeEditor = vscode.window.activeTextEditor;
-  const selectedText = activeEditor ? activeEditor.document.getText(activeEditor.selection).trim() : '';
-
-  if (selectedText) {
-    const choice = await vscode.window.showQuickPick([
-      {
-        label: 'Use Selected Text',
-        description: 'Use the active editor selection as the last iteration output'
-      },
-      {
-        label: 'Choose Output File',
-        description: 'Read the last iteration output from a file'
-      }
-    ], {
-      title: 'Last iteration output',
-      placeHolder: 'Choose where Ralphy should read the previous iteration output from'
-    });
-
-    if (!choice) {
-      return undefined;
-    }
-
-    if (choice.label === 'Use Selected Text') {
-      return selectedText;
-    }
-  }
-
-  const selected = await vscode.window.showOpenDialog({
-    title: 'Select last iteration output file',
-    defaultUri: vscode.Uri.file(workspaceFolder),
-    canSelectFiles: true,
-    canSelectFolders: false,
-    canSelectMany: false,
-    filters: {
-      'Text files': ['md', 'txt', 'log'],
-      'All files': ['*']
-    }
-  });
-
-  if (!selected || !selected[0]) {
-    return undefined;
-  }
-
-  return await fs.readFile(selected[0].fsPath, 'utf8');
-}
-
 async function buildPrompt(promptPath, workspaceFolder, taskFilePath, progressFilePath, lastIterationOutput) {
   const basePrompt = await fs.readFile(promptPath, 'utf8');
   const taskFile = toWorkspacePath(path.relative(workspaceFolder, taskFilePath));
@@ -348,20 +301,6 @@ This file records Ralph loop continuity, iteration summaries, and known remainin
 `;
     await fs.writeFile(progressFilePath, initialContent, 'utf8');
   }
-}
-
-async function appendContinuationSeed(progressFilePath, lastIterationOutput) {
-  const content = `
-
-## Continuation seed - ${new Date().toISOString()}
-
-The loop was continued with this last iteration output:
-
-\`\`\`md
-${lastIterationOutput.trim()}
-\`\`\`
-`;
-  await fs.appendFile(progressFilePath, content, 'utf8');
 }
 
 async function appendProgressEntry(progressFilePath, iteration, exitCode, iterationOutput) {
@@ -510,6 +449,15 @@ function getProgressFilePath(taskFilePath) {
   const taskBase = path.basename(taskFilePath, taskExt);
 
   return path.join(taskDir, `${taskBase}.ralphy-progress.md`);
+}
+
+async function fileExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function getBundledPromptPath() {
