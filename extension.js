@@ -19,6 +19,7 @@ function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand('ralphy.startLoop', () => startLoop(output, status)));
   context.subscriptions.push(vscode.commands.registerCommand('ralphy.continueLoop', () => continueLoop(output, status)));
   context.subscriptions.push(vscode.commands.registerCommand('ralphy.runIteration', () => runSingleIteration(output, status)));
+  context.subscriptions.push(vscode.commands.registerCommand('ralphy.endLoopAfterCurrent', () => endLoopAfterCurrent(output, status)));
   context.subscriptions.push(vscode.commands.registerCommand('ralphy.stopLoop', () => stopLoop(output, status)));
 }
 
@@ -94,6 +95,12 @@ async function runLoopCommand(output, status, isContinuation) {
       }
 
       currentLastIterationOutput = iterationOutput;
+
+      if (runner.shouldStopAfterCurrent()) {
+        output.appendLine('Ending Ralph loop after the completed iteration.');
+        vscode.window.showInformationMessage(`Ralphy ended after iteration ${iteration}.`);
+        return;
+      }
 
       if (stopWhenNoGapRemaining && hasNoGapRemaining(result.output)) {
         output.appendLine('Stopping because the iteration summary reports no highest-value gap remaining.');
@@ -178,6 +185,18 @@ function stopLoop(output, status) {
   activeRun.cancel();
   output.appendLine('Stopping Ralphy after the current Codex process exits.');
   status.text = '$(debug-stop) Ralphy stopping';
+}
+
+function endLoopAfterCurrent(output, status) {
+  if (!activeRun) {
+    vscode.window.showInformationMessage('Ralphy is not running.');
+    return;
+  }
+
+  activeRun.stopAfterCurrent();
+  output.appendLine('Ralphy will end after the current iteration completes.');
+  status.text = '$(circle-slash) Ralphy ending';
+  vscode.window.showInformationMessage('Ralphy will end after the current iteration completes.');
 }
 
 async function runIteration(workspaceFolder, iteration, output, runner, taskFilePath, progressFilePath, lastIterationOutput) {
@@ -357,6 +376,7 @@ function spawnCodex(command, args, cwd, output, runner, stdinText) {
 
 function createRunner(output, status) {
   let cancelled = false;
+  let stopAfterCurrent = false;
   let child = undefined;
 
   return {
@@ -378,6 +398,12 @@ function createRunner(output, status) {
         output.appendLine('Terminating active Codex process.');
         killChild(child);
       }
+    },
+    stopAfterCurrent() {
+      stopAfterCurrent = true;
+    },
+    shouldStopAfterCurrent() {
+      return stopAfterCurrent;
     },
     throwIfCancelled() {
       if (cancelled) {

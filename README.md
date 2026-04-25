@@ -7,6 +7,7 @@ This VS Code extension runs a Ralph loop by repeatedly starting fresh Codex CLI 
 - `Ralphy: Start Ralph Loop` runs up to `ralphy.maxIterations` iterations.
 - `Ralphy: Continue Ralph Loop` asks for the same inputs as start, then resumes from the matching progress ledger.
 - `Ralphy: Run One Ralph Iteration` runs one fresh Codex iteration.
+- `Ralphy: End Loop After Current Iteration` lets the active Codex iteration finish, records its output, then stops before starting another iteration.
 - `Ralphy: Stop Ralph Loop` terminates the active Codex process and stops the loop.
 
 Output is streamed to the `Ralphy` output channel.
