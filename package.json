@@ -1,7 +1,7 @@
 {
-  "name": "vscode-codex-ralphy",
-  "displayName": "Codex Ralphy Loop",
-  "description": "Runs a Ralph loop in VS Code by repeatedly invoking Codex with a workspace prompt.",
+  "name": "ralphdex",
+  "displayName": "Ralphdex",
+  "description": "Runs Ralph loops in VS Code by repeatedly invoking Codex with a bundled loop prompt.",
   "version": "0.0.1",
   "publisher": "local",
   "engines": {
@@ -11,55 +11,55 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:ralphy.startLoop",
-    "onCommand:ralphy.continueLoop",
-    "onCommand:ralphy.runIteration",
-    "onCommand:ralphy.endLoopAfterCurrent",
-    "onCommand:ralphy.stopLoop"
+    "onCommand:ralphdex.startLoop",
+    "onCommand:ralphdex.continueLoop",
+    "onCommand:ralphdex.runIteration",
+    "onCommand:ralphdex.endLoopAfterCurrent",
+    "onCommand:ralphdex.stopLoop"
   ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "ralphy.startLoop",
-        "title": "Ralphy: Start Ralph Loop",
-        "category": "Ralphy"
+        "command": "ralphdex.startLoop",
+        "title": "Ralphdex: Start Ralph Loop",
+        "category": "Ralphdex"
       },
       {
-        "command": "ralphy.continueLoop",
-        "title": "Ralphy: Continue Ralph Loop",
-        "category": "Ralphy"
+        "command": "ralphdex.continueLoop",
+        "title": "Ralphdex: Continue Ralph Loop",
+        "category": "Ralphdex"
       },
       {
-        "command": "ralphy.runIteration",
-        "title": "Ralphy: Run One Ralph Iteration",
-        "category": "Ralphy"
+        "command": "ralphdex.runIteration",
+        "title": "Ralphdex: Run One Ralph Iteration",
+        "category": "Ralphdex"
       },
       {
-        "command": "ralphy.endLoopAfterCurrent",
-        "title": "Ralphy: End Loop After Current Iteration",
-        "category": "Ralphy"
+        "command": "ralphdex.endLoopAfterCurrent",
+        "title": "Ralphdex: End Loop After Current Iteration",
+        "category": "Ralphdex"
       },
       {
-        "command": "ralphy.stopLoop",
-        "title": "Ralphy: Stop Ralph Loop",
-        "category": "Ralphy"
+        "command": "ralphdex.stopLoop",
+        "title": "Ralphdex: Stop Ralph Loop",
+        "category": "Ralphdex"
       }
     ],
     "configuration": {
-      "title": "Ralphy",
+      "title": "Ralphdex",
       "properties": {
-        "ralphy.taskPath": {
+        "ralphdex.taskPath": {
           "type": "string",
           "default": "",
           "description": "Optional workspace-relative default task file used if a task picker is cancelled."
         },
-        "ralphy.codexCommand": {
+        "ralphdex.codexCommand": {
           "type": "string",
           "default": "codex",
           "description": "Command used to start the Codex CLI."
         },
-        "ralphy.codexArgs": {
+        "ralphdex.codexArgs": {
           "type": "array",
           "default": [
             "exec",
@@ -72,18 +72,18 @@
           },
           "description": "Arguments passed to the Codex command. Supports ${workspaceFolder}, ${promptPath}, and ${prompt}."
         },
-        "ralphy.sendPromptToStdin": {
+        "ralphdex.sendPromptToStdin": {
           "type": "boolean",
           "default": true,
           "description": "Send the prompt file contents to Codex over stdin. The default arguments use `-` so Codex reads stdin."
         },
-        "ralphy.maxIterations": {
+        "ralphdex.maxIterations": {
           "type": "number",
           "default": 5,
           "minimum": 1,
           "description": "Maximum number of Codex iterations to run when starting the loop."
         },
-        "ralphy.stopWhenNoGapRemaining": {
+        "ralphdex.stopWhenNoGapRemaining": {
           "type": "boolean",
           "default": true,
           "description": "Stop the loop when the iteration summary says the highest-value gap remaining is none."

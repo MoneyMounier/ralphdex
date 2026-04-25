@@ -8,19 +8,19 @@ let extensionRoot = undefined;
 
 function activate(context) {
   extensionRoot = context.extensionUri.fsPath;
-  const output = vscode.window.createOutputChannel('Ralphy');
+  const output = vscode.window.createOutputChannel('Ralphdex');
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  status.command = 'ralphy.startLoop';
-  status.text = '$(sync) Ralphy';
+  status.command = 'ralphdex.startLoop';
+  status.text = '$(sync) Ralphdex';
   status.tooltip = 'Start Ralph loop';
   status.show();
 
   context.subscriptions.push(output, status);
-  context.subscriptions.push(vscode.commands.registerCommand('ralphy.startLoop', () => startLoop(output, status)));
-  context.subscriptions.push(vscode.commands.registerCommand('ralphy.continueLoop', () => continueLoop(output, status)));
-  context.subscriptions.push(vscode.commands.registerCommand('ralphy.runIteration', () => runSingleIteration(output, status)));
-  context.subscriptions.push(vscode.commands.registerCommand('ralphy.endLoopAfterCurrent', () => endLoopAfterCurrent(output, status)));
-  context.subscriptions.push(vscode.commands.registerCommand('ralphy.stopLoop', () => stopLoop(output, status)));
+  context.subscriptions.push(vscode.commands.registerCommand('ralphdex.startLoop', () => startLoop(output, status)));
+  context.subscriptions.push(vscode.commands.registerCommand('ralphdex.continueLoop', () => continueLoop(output, status)));
+  context.subscriptions.push(vscode.commands.registerCommand('ralphdex.runIteration', () => runSingleIteration(output, status)));
+  context.subscriptions.push(vscode.commands.registerCommand('ralphdex.endLoopAfterCurrent', () => endLoopAfterCurrent(output, status)));
+  context.subscriptions.push(vscode.commands.registerCommand('ralphdex.stopLoop', () => stopLoop(output, status)));
 }
 
 function deactivate() {
@@ -39,7 +39,7 @@ async function continueLoop(output, status) {
 
 async function runLoopCommand(output, status, isContinuation) {
   if (activeRun) {
-    vscode.window.showWarningMessage('Ralphy is already running.');
+    vscode.window.showWarningMessage('Ralphdex is already running.');
     return;
   }
 
@@ -48,7 +48,7 @@ async function runLoopCommand(output, status, isContinuation) {
     return;
   }
 
-  const config = vscode.workspace.getConfiguration('ralphy');
+  const config = vscode.workspace.getConfiguration('ralphdex');
   const loopOptions = await promptForLoopOptions(workspaceFolder.fsPath, config);
   if (!loopOptions) {
     return;
@@ -78,7 +78,7 @@ async function runLoopCommand(output, status, isContinuation) {
   if (isContinuation) {
     output.appendLine('Last iteration output: loaded from progress ledger');
   }
-  status.text = '$(sync~spin) Ralphy running';
+  status.text = '$(sync~spin) Ralphdex running';
 
   try {
     let currentLastIterationOutput = isContinuation ? await fs.readFile(progressFilePath, 'utf8') : undefined;
@@ -90,7 +90,7 @@ async function runLoopCommand(output, status, isContinuation) {
       await appendProgressEntry(progressFilePath, iteration, result.exitCode, iterationOutput);
 
       if (result.exitCode !== 0) {
-        vscode.window.showErrorMessage(`Ralphy stopped after iteration ${iteration}; Codex exited with ${result.exitCode}.`);
+        vscode.window.showErrorMessage(`Ralphdex stopped after iteration ${iteration}; Codex exited with ${result.exitCode}.`);
         return;
       }
 
@@ -98,36 +98,36 @@ async function runLoopCommand(output, status, isContinuation) {
 
       if (runner.shouldStopAfterCurrent()) {
         output.appendLine('Ending Ralph loop after the completed iteration.');
-        vscode.window.showInformationMessage(`Ralphy ended after iteration ${iteration}.`);
+        vscode.window.showInformationMessage(`Ralphdex ended after iteration ${iteration}.`);
         return;
       }
 
       if (stopWhenNoGapRemaining && hasNoGapRemaining(result.output)) {
         output.appendLine('Stopping because the iteration summary reports no highest-value gap remaining.');
-        vscode.window.showInformationMessage(`Ralphy completed after ${iteration} iteration(s).`);
+        vscode.window.showInformationMessage(`Ralphdex completed after ${iteration} iteration(s).`);
         return;
       }
     }
 
-    vscode.window.showInformationMessage(`Ralphy reached the configured limit of ${maxIterations} iteration(s).`);
+    vscode.window.showInformationMessage(`Ralphdex reached the configured limit of ${maxIterations} iteration(s).`);
   } catch (error) {
-    if (error && error.name === 'RalphyCancelled') {
-      output.appendLine('Ralphy loop stopped by user.');
-      vscode.window.showInformationMessage('Ralphy loop stopped.');
+    if (error && error.name === 'RalphdexCancelled') {
+      output.appendLine('Ralphdex loop stopped by user.');
+      vscode.window.showInformationMessage('Ralphdex loop stopped.');
       return;
     }
 
-    output.appendLine(`Ralphy failed: ${formatError(error)}`);
-    vscode.window.showErrorMessage(`Ralphy failed: ${formatError(error)}`);
+    output.appendLine(`Ralphdex failed: ${formatError(error)}`);
+    vscode.window.showErrorMessage(`Ralphdex failed: ${formatError(error)}`);
   } finally {
     activeRun = undefined;
-    status.text = '$(sync) Ralphy';
+    status.text = '$(sync) Ralphdex';
   }
 }
 
 async function runSingleIteration(output, status) {
   if (activeRun) {
-    vscode.window.showWarningMessage('Ralphy is already running.');
+    vscode.window.showWarningMessage('Ralphdex is already running.');
     return;
   }
 
@@ -136,7 +136,7 @@ async function runSingleIteration(output, status) {
     return;
   }
 
-  const config = vscode.workspace.getConfiguration('ralphy');
+  const config = vscode.workspace.getConfiguration('ralphdex');
   const taskFilePath = await promptForTaskFile(workspaceFolder.fsPath, config);
   if (!taskFilePath) {
     return;
@@ -150,57 +150,57 @@ async function runSingleIteration(output, status) {
   output.appendLine(`Running one Ralph iteration in ${workspaceFolder.fsPath}`);
   output.appendLine(`Task file: ${taskFilePath}`);
   output.appendLine(`Progress file: ${progressFilePath}`);
-  status.text = '$(sync~spin) Ralphy running';
+  status.text = '$(sync~spin) Ralphdex running';
 
   try {
     const result = await runIteration(workspaceFolder.fsPath, 1, output, runner, taskFilePath, progressFilePath);
     runner.throwIfCancelled();
     await appendProgressEntry(progressFilePath, 1, result.exitCode, extractIterationSummary(result.output) || result.output);
     if (result.exitCode === 0) {
-      vscode.window.showInformationMessage('Ralphy iteration completed.');
+      vscode.window.showInformationMessage('Ralphdex iteration completed.');
     } else {
-      vscode.window.showErrorMessage(`Ralphy iteration failed; Codex exited with ${result.exitCode}.`);
+      vscode.window.showErrorMessage(`Ralphdex iteration failed; Codex exited with ${result.exitCode}.`);
     }
   } catch (error) {
-    if (error && error.name === 'RalphyCancelled') {
-      output.appendLine('Ralphy iteration stopped by user.');
-      vscode.window.showInformationMessage('Ralphy iteration stopped.');
+    if (error && error.name === 'RalphdexCancelled') {
+      output.appendLine('Ralphdex iteration stopped by user.');
+      vscode.window.showInformationMessage('Ralphdex iteration stopped.');
       return;
     }
 
-    output.appendLine(`Ralphy failed: ${formatError(error)}`);
-    vscode.window.showErrorMessage(`Ralphy failed: ${formatError(error)}`);
+    output.appendLine(`Ralphdex failed: ${formatError(error)}`);
+    vscode.window.showErrorMessage(`Ralphdex failed: ${formatError(error)}`);
   } finally {
     activeRun = undefined;
-    status.text = '$(sync) Ralphy';
+    status.text = '$(sync) Ralphdex';
   }
 }
 
 function stopLoop(output, status) {
   if (!activeRun) {
-    vscode.window.showInformationMessage('Ralphy is not running.');
+    vscode.window.showInformationMessage('Ralphdex is not running.');
     return;
   }
 
   activeRun.cancel();
-  output.appendLine('Stopping Ralphy after the current Codex process exits.');
-  status.text = '$(debug-stop) Ralphy stopping';
+  output.appendLine('Stopping Ralphdex after the current Codex process exits.');
+  status.text = '$(debug-stop) Ralphdex stopping';
 }
 
 function endLoopAfterCurrent(output, status) {
   if (!activeRun) {
-    vscode.window.showInformationMessage('Ralphy is not running.');
+    vscode.window.showInformationMessage('Ralphdex is not running.');
     return;
   }
 
   activeRun.stopAfterCurrent();
-  output.appendLine('Ralphy will end after the current iteration completes.');
-  status.text = '$(circle-slash) Ralphy ending';
-  vscode.window.showInformationMessage('Ralphy will end after the current iteration completes.');
+  output.appendLine('Ralphdex will end after the current iteration completes.');
+  status.text = '$(circle-slash) Ralphdex ending';
+  vscode.window.showInformationMessage('Ralphdex will end after the current iteration completes.');
 }
 
 async function runIteration(workspaceFolder, iteration, output, runner, taskFilePath, progressFilePath, lastIterationOutput) {
-  const config = vscode.workspace.getConfiguration('ralphy');
+  const config = vscode.workspace.getConfiguration('ralphdex');
   const promptPath = getBundledPromptPath();
   const prompt = await buildPrompt(promptPath, workspaceFolder, taskFilePath, progressFilePath, lastIterationOutput);
   const command = config.get('codexCommand', 'codex');
@@ -264,7 +264,7 @@ async function promptForIterationCount(config) {
   const configuredDefault = String(config.get('maxIterations', 5));
   const value = await vscode.window.showInputBox({
     title: 'Ralph loop iterations',
-    prompt: 'How many fresh Codex iterations should Ralphy run?',
+    prompt: 'How many fresh Codex iterations should Ralphdex run?',
     value: configuredDefault,
     validateInput(input) {
       const parsed = Number(input);
@@ -393,7 +393,7 @@ function createRunner(output, status) {
     },
     cancel() {
       cancelled = true;
-      status.text = '$(debug-stop) Ralphy stopping';
+      status.text = '$(debug-stop) Ralphdex stopping';
       if (child) {
         output.appendLine('Terminating active Codex process.');
         killChild(child);
@@ -407,8 +407,8 @@ function createRunner(output, status) {
     },
     throwIfCancelled() {
       if (cancelled) {
-        const error = new Error('Ralphy cancelled');
-        error.name = 'RalphyCancelled';
+        const error = new Error('Ralphdex cancelled');
+        error.name = 'RalphdexCancelled';
         throw error;
       }
     }
@@ -427,12 +427,12 @@ function killChild(child) {
 function getWorkspaceFolder() {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) {
-    vscode.window.showErrorMessage('Open a workspace folder before running Ralphy.');
+    vscode.window.showErrorMessage('Open a workspace folder before running Ralphdex.');
     return undefined;
   }
 
   if (folders.length > 1) {
-    vscode.window.showWarningMessage(`Ralphy is using ${folders[0].name}. Multi-root selection is not implemented yet.`);
+    vscode.window.showWarningMessage(`Ralphdex is using ${folders[0].name}. Multi-root selection is not implemented yet.`);
   }
 
   return folders[0].uri;
@@ -474,7 +474,7 @@ function getProgressFilePath(taskFilePath) {
   const taskExt = path.extname(taskFilePath);
   const taskBase = path.basename(taskFilePath, taskExt);
 
-  return path.join(taskDir, `${taskBase}.ralphy-progress.md`);
+  return path.join(taskDir, `${taskBase}.ralphdex-progress.md`);
 }
 
 async function fileExists(filePath) {
@@ -502,3 +502,4 @@ module.exports = {
   activate,
   deactivate
 };
+
