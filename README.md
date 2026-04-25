@@ -19,6 +19,7 @@ When you start a loop, Ralphy asks for:
 When you continue a loop, Ralphy also asks for the last iteration output. If text is selected in the active editor, it can use that selection; otherwise it asks for an output file.
 
 Ralphy inserts the selected task file into every `<taskfile>` placeholder in the bundled `plan-implement.md` before sending the prompt to Codex.
+It also creates a progress ledger beside the task file named `<task-name>.ralphy-progress.md`, inserts that path into every `<progressfile>` placeholder, and appends each captured iteration summary to the ledger.
 For continued loops, it appends the supplied handoff under `## Last iteration output`. After each successful iteration, Ralphy passes that iteration's summary into the next fresh Codex run.
 
 ## Settings

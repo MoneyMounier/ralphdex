@@ -59,6 +59,12 @@ async function runLoopCommand(output, status, isContinuation) {
   }
 
   const { taskFilePath, maxIterations } = loopOptions;
+  const progressFilePath = getProgressFilePath(taskFilePath);
+  await ensureProgressFile(workspaceFolder.fsPath, taskFilePath, progressFilePath);
+  if (lastIterationOutput) {
+    await appendContinuationSeed(progressFilePath, lastIterationOutput);
+  }
+
   const stopWhenNoGapRemaining = config.get('stopWhenNoGapRemaining', true);
   const runner = createRunner(output, status);
   activeRun = runner;
@@ -66,6 +72,7 @@ async function runLoopCommand(output, status, isContinuation) {
   output.show(true);
   output.appendLine(`${isContinuation ? 'Continuing' : 'Starting'} Ralph loop in ${workspaceFolder.fsPath}`);
   output.appendLine(`Task file: ${taskFilePath}`);
+  output.appendLine(`Progress file: ${progressFilePath}`);
   output.appendLine(`Max iterations: ${maxIterations}`);
   if (isContinuation) {
     output.appendLine('Last iteration output: provided');
@@ -76,14 +83,17 @@ async function runLoopCommand(output, status, isContinuation) {
     let currentLastIterationOutput = lastIterationOutput;
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       runner.throwIfCancelled();
-      const result = await runIteration(workspaceFolder.fsPath, iteration, output, runner, taskFilePath, currentLastIterationOutput);
+      const result = await runIteration(workspaceFolder.fsPath, iteration, output, runner, taskFilePath, progressFilePath, currentLastIterationOutput);
       runner.throwIfCancelled();
+      const iterationOutput = extractIterationSummary(result.output) || result.output;
+      await appendProgressEntry(progressFilePath, iteration, result.exitCode, iterationOutput);
+
       if (result.exitCode !== 0) {
         vscode.window.showErrorMessage(`Ralphy stopped after iteration ${iteration}; Codex exited with ${result.exitCode}.`);
         return;
       }
 
-      currentLastIterationOutput = extractIterationSummary(result.output) || result.output;
+      currentLastIterationOutput = iterationOutput;
 
       if (stopWhenNoGapRemaining && hasNoGapRemaining(result.output)) {
         output.appendLine('Stopping because the iteration summary reports no highest-value gap remaining.');
@@ -124,17 +134,21 @@ async function runSingleIteration(output, status) {
   if (!taskFilePath) {
     return;
   }
+  const progressFilePath = getProgressFilePath(taskFilePath);
+  await ensureProgressFile(workspaceFolder.fsPath, taskFilePath, progressFilePath);
 
   const runner = createRunner(output, status);
   activeRun = runner;
   output.show(true);
   output.appendLine(`Running one Ralph iteration in ${workspaceFolder.fsPath}`);
   output.appendLine(`Task file: ${taskFilePath}`);
+  output.appendLine(`Progress file: ${progressFilePath}`);
   status.text = '$(sync~spin) Ralphy running';
 
   try {
-    const result = await runIteration(workspaceFolder.fsPath, 1, output, runner, taskFilePath);
+    const result = await runIteration(workspaceFolder.fsPath, 1, output, runner, taskFilePath, progressFilePath);
     runner.throwIfCancelled();
+    await appendProgressEntry(progressFilePath, 1, result.exitCode, extractIterationSummary(result.output) || result.output);
     if (result.exitCode === 0) {
       vscode.window.showInformationMessage('Ralphy iteration completed.');
     } else {
@@ -166,10 +180,10 @@ function stopLoop(output, status) {
   status.text = '$(debug-stop) Ralphy stopping';
 }
 
-async function runIteration(workspaceFolder, iteration, output, runner, taskFilePath, lastIterationOutput) {
+async function runIteration(workspaceFolder, iteration, output, runner, taskFilePath, progressFilePath, lastIterationOutput) {
   const config = vscode.workspace.getConfiguration('ralphy');
   const promptPath = getBundledPromptPath();
-  const prompt = await buildPrompt(promptPath, workspaceFolder, taskFilePath, lastIterationOutput);
+  const prompt = await buildPrompt(promptPath, workspaceFolder, taskFilePath, progressFilePath, lastIterationOutput);
   const command = config.get('codexCommand', 'codex');
   const sendPromptToStdin = config.get('sendPromptToStdin', true);
   const args = config.get('codexArgs', ['exec', '--cd', '${workspaceFolder}', '-'])
@@ -182,6 +196,7 @@ async function runIteration(workspaceFolder, iteration, output, runner, taskFile
   output.appendLine(`=== Ralph iteration ${iteration} ===`);
   output.appendLine(`Prompt: ${promptPath}`);
   output.appendLine(`Task: ${taskFilePath}`);
+  output.appendLine(`Progress: ${progressFilePath}`);
   output.appendLine(`Command: ${command} ${args.map(quoteForLog).join(' ')}`);
 
   return await spawnCodex(command, args, workspaceFolder, output, runner, sendPromptToStdin ? prompt : undefined);
@@ -296,10 +311,13 @@ async function promptForLastIterationOutput(workspaceFolder) {
   return await fs.readFile(selected[0].fsPath, 'utf8');
 }
 
-async function buildPrompt(promptPath, workspaceFolder, taskFilePath, lastIterationOutput) {
+async function buildPrompt(promptPath, workspaceFolder, taskFilePath, progressFilePath, lastIterationOutput) {
   const basePrompt = await fs.readFile(promptPath, 'utf8');
   const taskFile = toWorkspacePath(path.relative(workspaceFolder, taskFilePath));
-  const prompt = basePrompt.replaceAll('<taskfile>', taskFile);
+  const progressFile = toWorkspacePath(path.relative(workspaceFolder, progressFilePath));
+  const prompt = basePrompt
+    .replaceAll('<taskfile>', taskFile)
+    .replaceAll('<progressfile>', progressFile);
 
   if (!lastIterationOutput) {
     return prompt;
@@ -311,6 +329,54 @@ async function buildPrompt(promptPath, workspaceFolder, taskFilePath, lastIterat
 
 ${lastIterationOutput.trim()}
 `;
+}
+
+async function ensureProgressFile(workspaceFolder, taskFilePath, progressFilePath) {
+  try {
+    await fs.access(progressFilePath);
+    return;
+  } catch {
+    const taskFile = toWorkspacePath(path.relative(workspaceFolder, taskFilePath));
+    const progressFile = toWorkspacePath(path.relative(workspaceFolder, progressFilePath));
+    const initialContent = `# Ralph loop progress
+
+Task file: \`${taskFile}\`
+Progress file: \`${progressFile}\`
+Created: ${new Date().toISOString()}
+
+This file records Ralph loop continuity, iteration summaries, and known remaining work.
+`;
+    await fs.writeFile(progressFilePath, initialContent, 'utf8');
+  }
+}
+
+async function appendContinuationSeed(progressFilePath, lastIterationOutput) {
+  const content = `
+
+## Continuation seed - ${new Date().toISOString()}
+
+The loop was continued with this last iteration output:
+
+\`\`\`md
+${lastIterationOutput.trim()}
+\`\`\`
+`;
+  await fs.appendFile(progressFilePath, content, 'utf8');
+}
+
+async function appendProgressEntry(progressFilePath, iteration, exitCode, iterationOutput) {
+  const status = exitCode === 0 ? 'completed' : `failed with exit code ${exitCode}`;
+  const content = `
+
+## Harness record - iteration ${iteration} - ${new Date().toISOString()}
+
+Status: ${status}
+
+\`\`\`md
+${iterationOutput.trim()}
+\`\`\`
+`;
+  await fs.appendFile(progressFilePath, content, 'utf8');
 }
 
 function spawnCodex(command, args, cwd, output, runner, stdinText) {
@@ -436,6 +502,14 @@ function quoteForLog(value) {
 
 function toWorkspacePath(value) {
   return value.split(path.sep).join('/');
+}
+
+function getProgressFilePath(taskFilePath) {
+  const taskDir = path.dirname(taskFilePath);
+  const taskExt = path.extname(taskFilePath);
+  const taskBase = path.basename(taskFilePath, taskExt);
+
+  return path.join(taskDir, `${taskBase}.ralphy-progress.md`);
 }
 
 function getBundledPromptPath() {
