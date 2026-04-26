@@ -11,6 +11,8 @@
     "Other"
   ],
   "activationEvents": [
+    "onView:ralphdex.controlView",
+    "onCommand:ralphdex.openControl",
     "onCommand:ralphdex.startLoop",
     "onCommand:ralphdex.continueLoop",
     "onCommand:ralphdex.runIteration",
@@ -19,7 +21,30 @@
   ],
   "main": "./extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ralphdex",
+          "title": "Ralphdex",
+          "icon": "media/ralphdex.svg"
+        }
+      ]
+    },
+    "views": {
+      "ralphdex": [
+        {
+          "id": "ralphdex.controlView",
+          "name": "Controls",
+          "type": "webview"
+        }
+      ]
+    },
     "commands": [
+      {
+        "command": "ralphdex.openControl",
+        "title": "Ralphdex: Open Controls",
+        "category": "Ralphdex"
+      },
       {
         "command": "ralphdex.startLoop",
         "title": "Ralphdex: Start Ralph Loop",

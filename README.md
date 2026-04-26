@@ -12,6 +12,19 @@ This VS Code extension runs a Ralph loop by repeatedly starting fresh Codex CLI 
 
 Output is streamed to the `Ralphdex` output channel.
 
+## UI
+
+Ralphdex adds an activity bar view named `Ralphdex`. Open it from the activity bar or run `Ralphdex: Open Controls`.
+
+The control view lets you:
+
+- choose the task file
+- set the iteration count
+- start or continue a loop
+- run one iteration
+- end after the current iteration or stop the active Codex process
+- open the progress ledger or output channel
+
 When you start a loop, Ralphdex asks for:
 
 - the task file Codex should work from
