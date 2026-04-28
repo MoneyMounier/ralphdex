@@ -52,3 +52,11 @@ codex exec --cd ${workspaceFolder} -
 ```
 
 Adjust `ralphdex.codexArgs` if your local Codex CLI uses a different interface.
+
+## Packaging
+
+Build a VSIX package from the extension root with:
+
+```powershell
+npx @vscode/vsce package
+```
