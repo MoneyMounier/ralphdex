@@ -4,6 +4,10 @@
   "description": "Runs Ralph loops in VS Code by repeatedly invoking Codex with a bundled loop prompt.",
   "version": "0.0.1",
   "publisher": "local",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MoneyMounier/ralphdex.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
