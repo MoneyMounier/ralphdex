@@ -2,7 +2,7 @@
   "name": "ralphdex",
   "displayName": "Ralphdex",
   "description": "Runs Ralph loops in VS Code by repeatedly invoking Codex with a bundled loop prompt.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "local",
   "repository": {
     "type": "git",

@@ -45,7 +45,7 @@ The loop has a persistent progress ledger at `<progressfile>`. This file lives b
 
 You must never run any of these, and the harness will block you if you try:
 
-- `git commit`, `git push`, `git reset --hard`, `git rebase`, `git checkout --`, `git branch -D`, `git clean -f`
+- `git push`, `git reset --hard`, `git rebase`, `git checkout --`, `git branch -D`, `git clean -f`
 - `rm -rf`, `rm -r`, `sudo`, anything that touches files outside the current worktree
 - Network calls (curl, wget, npm publish, package installs from remote registries) unless `<taskfile>` explicitly requires them
 
