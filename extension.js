@@ -3,6 +3,8 @@ const fs = require('fs/promises');
 const path = require('path');
 const { spawn } = require('child_process');
 
+const DEFAULT_MODEL_SUGGESTIONS = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.2'];
+
 let activeRun = undefined;
 let extensionRoot = undefined;
 let controlViewProvider = undefined;
@@ -10,6 +12,9 @@ const uiState = {
   taskFilePath: '',
   progressFilePath: '',
   maxIterations: 5,
+  model: '',
+  modelReasoningEffort: '',
+  availableModels: DEFAULT_MODEL_SUGGESTIONS,
   status: 'Ready',
   isRunning: false,
   canEndAfterCurrent: false
@@ -24,11 +29,21 @@ function activate(context) {
   status.tooltip = 'Start Ralph loop';
   status.show();
 
-  uiState.maxIterations = vscode.workspace.getConfiguration('ralphdex').get('maxIterations', 5);
+  syncUiStateFromConfiguration();
   controlViewProvider = new RalphdexControlViewProvider(context.extensionUri, output, status);
 
   context.subscriptions.push(output, status);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider('ralphdex.controlView', controlViewProvider));
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+    if (
+      event.affectsConfiguration('ralphdex.maxIterations')
+      || event.affectsConfiguration('ralphdex.model')
+      || event.affectsConfiguration('ralphdex.modelReasoningEffort')
+      || event.affectsConfiguration('ralphdex.modelSuggestions')
+    ) {
+      syncUiStateFromConfiguration();
+    }
+  }));
   context.subscriptions.push(vscode.commands.registerCommand('ralphdex.openControl', () => vscode.commands.executeCommand('ralphdex.controlView.focus')));
   context.subscriptions.push(vscode.commands.registerCommand('ralphdex.startLoop', () => startLoop(output, status)));
   context.subscriptions.push(vscode.commands.registerCommand('ralphdex.continueLoop', () => continueLoop(output, status)));
@@ -185,7 +200,8 @@ function getControlViewHtml(webview) {
       color: var(--vscode-descriptionForeground);
       font-size: 12px;
     }
-    input {
+    input,
+    select {
       box-sizing: border-box;
       width: 100%;
       min-height: 30px;
@@ -196,7 +212,8 @@ function getControlViewHtml(webview) {
       background: var(--vscode-input-background);
       font-family: var(--vscode-font-family);
     }
-    input:focus {
+    input:focus,
+    select:focus {
       outline: 1px solid var(--vscode-focusBorder);
       outline-offset: -1px;
     }
@@ -273,6 +290,20 @@ function getControlViewHtml(webview) {
         Iterations
         <input id="maxIterations" type="number" min="1" step="1">
       </label>
+      <label>
+        Model
+        <input id="model" type="text" list="modelOptions" placeholder="Use Codex default model">
+        <datalist id="modelOptions"></datalist>
+      </label>
+      <label>
+        Intelligence / speed
+        <select id="modelReasoningEffort">
+          <option value="">Default</option>
+          <option value="low">Fast</option>
+          <option value="medium">Balanced</option>
+          <option value="high">Thorough</option>
+        </select>
+      </label>
       <div id="progressFile" class="hint"></div>
     </section>
 
@@ -303,6 +334,9 @@ function getControlViewHtml(webview) {
       dot: document.getElementById('dot'),
       taskFile: document.getElementById('taskFile'),
       maxIterations: document.getElementById('maxIterations'),
+      model: document.getElementById('model'),
+      modelOptions: document.getElementById('modelOptions'),
+      modelReasoningEffort: document.getElementById('modelReasoningEffort'),
       progressFile: document.getElementById('progressFile'),
       selectTask: document.getElementById('selectTask'),
       start: document.getElementById('start'),
@@ -320,7 +354,9 @@ function getControlViewHtml(webview) {
       vscode.postMessage({
         type,
         taskFilePath: els.taskFile.value,
-        maxIterations: els.maxIterations.value
+        maxIterations: els.maxIterations.value,
+        model: els.model.value,
+        modelReasoningEffort: els.modelReasoningEffort.value
       });
     }
 
@@ -330,10 +366,19 @@ function getControlViewHtml(webview) {
       els.dot.classList.toggle('running', !!currentState.isRunning);
       els.taskFile.value = currentState.taskFilePath || '';
       els.maxIterations.value = currentState.maxIterations || 5;
+      els.model.value = currentState.model || '';
+      els.modelReasoningEffort.value = currentState.modelReasoningEffort || '';
       els.progressFile.textContent = currentState.progressFilePath ? currentState.progressFilePath : '';
+      els.modelOptions.replaceChildren(...(Array.isArray(currentState.availableModels) ? currentState.availableModels : []).map((model) => {
+        const option = document.createElement('option');
+        option.value = model;
+        return option;
+      }));
 
       const hasTask = !!currentState.taskFilePath;
       els.selectTask.disabled = !!currentState.isRunning;
+      els.model.disabled = !!currentState.isRunning;
+      els.modelReasoningEffort.disabled = !!currentState.isRunning;
       els.start.disabled = !hasTask || !!currentState.isRunning;
       els.continueButton.disabled = !hasTask || !!currentState.isRunning;
       els.runOnce.disabled = !hasTask || !!currentState.isRunning;
@@ -352,6 +397,12 @@ function getControlViewHtml(webview) {
     els.openOutput.addEventListener('click', () => post('openOutput'));
     els.maxIterations.addEventListener('change', () => {
       currentState.maxIterations = els.maxIterations.value;
+    });
+    els.model.addEventListener('change', () => {
+      currentState.model = els.model.value;
+    });
+    els.modelReasoningEffort.addEventListener('change', () => {
+      currentState.modelReasoningEffort = els.modelReasoningEffort.value;
     });
 
     window.addEventListener('message', (event) => {
@@ -391,7 +442,12 @@ async function runLoopCommand(output, status, isContinuation, providedOptions) {
     return;
   }
 
-  const { taskFilePath, maxIterations } = loopOptions;
+  const {
+    taskFilePath,
+    maxIterations,
+    model,
+    modelReasoningEffort
+  } = loopOptions;
   const progressFilePath = getProgressFilePath(taskFilePath);
   if (isContinuation) {
     const hasProgressFile = await fileExists(progressFilePath);
@@ -406,13 +462,15 @@ async function runLoopCommand(output, status, isContinuation, providedOptions) {
   const stopWhenNoGapRemaining = config.get('stopWhenNoGapRemaining', true);
   const runner = createRunner(output, status);
   activeRun = runner;
-  setUiRunning(true, isContinuation ? 'Continuing loop...' : 'Running loop...', taskFilePath, progressFilePath, maxIterations);
+  setUiRunning(true, isContinuation ? 'Continuing loop...' : 'Running loop...', taskFilePath, progressFilePath, maxIterations, model, modelReasoningEffort);
 
   output.show(true);
   output.appendLine(`${isContinuation ? 'Continuing' : 'Starting'} Ralph loop in ${workspaceFolder.fsPath}`);
   output.appendLine(`Task file: ${taskFilePath}`);
   output.appendLine(`Progress file: ${progressFilePath}`);
   output.appendLine(`Max iterations: ${maxIterations}`);
+  output.appendLine(`Model: ${model || 'default'}`);
+  output.appendLine(`Intelligence / speed: ${formatReasoningEffortLabel(modelReasoningEffort)}`);
   if (isContinuation) {
     output.appendLine('Last iteration output: loaded from progress ledger');
   }
@@ -423,7 +481,17 @@ async function runLoopCommand(output, status, isContinuation, providedOptions) {
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       runner.throwIfCancelled();
       updateUiState({ status: `Running iteration ${iteration} of ${maxIterations}...` });
-      const result = await runIteration(workspaceFolder.fsPath, iteration, output, runner, taskFilePath, progressFilePath, currentLastIterationOutput);
+      const result = await runIteration(
+        workspaceFolder.fsPath,
+        iteration,
+        output,
+        runner,
+        taskFilePath,
+        progressFilePath,
+        currentLastIterationOutput,
+        model,
+        modelReasoningEffort
+      );
       runner.throwIfCancelled();
       const iterationOutput = extractIterationSummary(result.output) || result.output;
       await appendProgressEntry(progressFilePath, iteration, result.exitCode, iterationOutput);
@@ -461,7 +529,7 @@ async function runLoopCommand(output, status, isContinuation, providedOptions) {
   } finally {
     activeRun = undefined;
     status.text = '$(sync) Ralphdex';
-    setUiRunning(false, 'Ready', taskFilePath, progressFilePath, maxIterations);
+    setUiRunning(false, 'Ready', taskFilePath, progressFilePath, maxIterations, model, modelReasoningEffort);
   }
 }
 
@@ -477,6 +545,7 @@ async function runSingleIteration(output, status, providedOptions) {
   }
 
   const config = vscode.workspace.getConfiguration('ralphdex');
+  const runPreferences = providedOptions || getConfiguredRunPreferences(config);
   const taskFilePath = providedOptions && providedOptions.taskFilePath
     ? providedOptions.taskFilePath
     : await promptForTaskFile(workspaceFolder.fsPath, config);
@@ -488,16 +557,36 @@ async function runSingleIteration(output, status, providedOptions) {
 
   const runner = createRunner(output, status);
   activeRun = runner;
-  setUiRunning(true, 'Running one iteration...', taskFilePath, progressFilePath, uiState.maxIterations);
+  setUiRunning(
+    true,
+    'Running one iteration...',
+    taskFilePath,
+    progressFilePath,
+    uiState.maxIterations,
+    runPreferences.model,
+    runPreferences.modelReasoningEffort
+  );
   output.show(true);
   output.appendLine(`Running one Ralph iteration in ${workspaceFolder.fsPath}`);
   output.appendLine(`Task file: ${taskFilePath}`);
   output.appendLine(`Progress file: ${progressFilePath}`);
+  output.appendLine(`Model: ${runPreferences.model || 'default'}`);
+  output.appendLine(`Intelligence / speed: ${formatReasoningEffortLabel(runPreferences.modelReasoningEffort)}`);
   status.text = '$(sync~spin) Ralphdex running';
 
   try {
     updateUiState({ status: 'Running iteration 1 of 1...' });
-    const result = await runIteration(workspaceFolder.fsPath, 1, output, runner, taskFilePath, progressFilePath);
+    const result = await runIteration(
+      workspaceFolder.fsPath,
+      1,
+      output,
+      runner,
+      taskFilePath,
+      progressFilePath,
+      undefined,
+      runPreferences.model,
+      runPreferences.modelReasoningEffort
+    );
     runner.throwIfCancelled();
     await appendProgressEntry(progressFilePath, 1, result.exitCode, extractIterationSummary(result.output) || result.output);
     if (result.exitCode === 0) {
@@ -517,7 +606,15 @@ async function runSingleIteration(output, status, providedOptions) {
   } finally {
     activeRun = undefined;
     status.text = '$(sync) Ralphdex';
-    setUiRunning(false, 'Ready', taskFilePath, progressFilePath, uiState.maxIterations);
+    setUiRunning(
+      false,
+      'Ready',
+      taskFilePath,
+      progressFilePath,
+      uiState.maxIterations,
+      runPreferences.model,
+      runPreferences.modelReasoningEffort
+    );
   }
 }
 
@@ -546,23 +643,39 @@ function endLoopAfterCurrent(output, status) {
   vscode.window.showInformationMessage('Ralphdex will end after the current iteration completes.');
 }
 
-async function runIteration(workspaceFolder, iteration, output, runner, taskFilePath, progressFilePath, lastIterationOutput) {
+async function runIteration(
+  workspaceFolder,
+  iteration,
+  output,
+  runner,
+  taskFilePath,
+  progressFilePath,
+  lastIterationOutput,
+  model,
+  modelReasoningEffort
+) {
   const config = vscode.workspace.getConfiguration('ralphdex');
   const promptPath = getBundledPromptPath();
   const prompt = await buildPrompt(promptPath, workspaceFolder, taskFilePath, progressFilePath, lastIterationOutput);
   const command = config.get('codexCommand', 'codex');
   const sendPromptToStdin = config.get('sendPromptToStdin', true);
-  const args = config.get('codexArgs', ['exec', '--cd', '${workspaceFolder}', '-'])
-    .map((arg) => arg
+  const args = applyCodexRunPreferences(
+    config.get('codexArgs', ['exec', '--cd', '${workspaceFolder}', '-'])
+      .map((arg) => arg
       .replaceAll('${workspaceFolder}', workspaceFolder)
       .replaceAll('${promptPath}', promptPath)
-      .replaceAll('${prompt}', prompt));
+      .replaceAll('${prompt}', prompt)),
+    model,
+    modelReasoningEffort
+  );
 
   output.appendLine('');
   output.appendLine(`=== Ralph iteration ${iteration} ===`);
   output.appendLine(`Prompt: ${promptPath}`);
   output.appendLine(`Task: ${taskFilePath}`);
   output.appendLine(`Progress: ${progressFilePath}`);
+  output.appendLine(`Model selection: ${model || 'default'}`);
+  output.appendLine(`Reasoning effort: ${modelReasoningEffort || 'default'}`);
   output.appendLine(`Command: ${command} ${args.map(quoteForLog).join(' ')}`);
 
   return await spawnCodex(command, args, workspaceFolder, output, runner, sendPromptToStdin ? prompt : undefined);
@@ -579,7 +692,11 @@ async function promptForLoopOptions(workspaceFolder, config) {
     return undefined;
   }
 
-  return { taskFilePath, maxIterations };
+  return {
+    taskFilePath,
+    maxIterations,
+    ...getConfiguredRunPreferences(config)
+  };
 }
 
 async function promptForTaskFile(workspaceFolder, config) {
@@ -675,12 +792,106 @@ function buildUiRunOptions(message) {
     return undefined;
   }
 
+  const model = message && typeof message.model === 'string'
+    ? message.model.trim()
+    : '';
+  const modelReasoningEffort = normalizeModelReasoningEffort(message && message.modelReasoningEffort);
+
   updateUiState({
     taskFilePath,
     progressFilePath: getProgressFilePath(taskFilePath),
-    maxIterations
+    maxIterations,
+    model,
+    modelReasoningEffort
   });
-  return { taskFilePath, maxIterations };
+  return {
+    taskFilePath,
+    maxIterations,
+    model,
+    modelReasoningEffort
+  };
+}
+
+function syncUiStateFromConfiguration() {
+  const config = vscode.workspace.getConfiguration('ralphdex');
+  updateUiState({
+    maxIterations: config.get('maxIterations', 5),
+    model: getConfiguredModel(config),
+    modelReasoningEffort: getConfiguredModelReasoningEffort(config),
+    availableModels: getConfiguredModelSuggestions(config)
+  });
+}
+
+function getConfiguredRunPreferences(config) {
+  return {
+    model: getConfiguredModel(config),
+    modelReasoningEffort: getConfiguredModelReasoningEffort(config)
+  };
+}
+
+function getConfiguredModel(config) {
+  const value = config.get('model', '');
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function getConfiguredModelSuggestions(config) {
+  const configured = config.get('modelSuggestions', DEFAULT_MODEL_SUGGESTIONS);
+  const suggestions = Array.isArray(configured) ? configured : DEFAULT_MODEL_SUGGESTIONS;
+  return Array.from(new Set(suggestions
+    .filter((value) => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter(Boolean)));
+}
+
+function getConfiguredModelReasoningEffort(config) {
+  return normalizeModelReasoningEffort(config.get('modelReasoningEffort', ''));
+}
+
+function normalizeModelReasoningEffort(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return normalized === 'low' || normalized === 'medium' || normalized === 'high'
+    ? normalized
+    : '';
+}
+
+function applyCodexRunPreferences(args, model, modelReasoningEffort) {
+  const runArgs = Array.isArray(args) ? [...args] : [];
+  const injectedArgs = [];
+
+  if (model) {
+    injectedArgs.push('--model', model);
+  }
+
+  if (modelReasoningEffort) {
+    injectedArgs.push('-c', `model_reasoning_effort=${modelReasoningEffort}`);
+  }
+
+  if (injectedArgs.length === 0) {
+    return runArgs;
+  }
+
+  const insertIndex = runArgs.length > 0 && !String(runArgs[0]).startsWith('-')
+    ? 1
+    : 0;
+
+  return [
+    ...runArgs.slice(0, insertIndex),
+    ...injectedArgs,
+    ...runArgs.slice(insertIndex)
+  ];
+}
+
+function formatReasoningEffortLabel(value) {
+  switch (value) {
+    case 'low':
+      return 'Fast';
+    case 'medium':
+      return 'Balanced';
+    case 'high':
+      return 'Thorough';
+    default:
+      return 'Default';
+  }
 }
 
 async function openProgressFileFromUi() {
@@ -697,14 +908,16 @@ async function openProgressFileFromUi() {
   }
 }
 
-function setUiRunning(isRunning, status, taskFilePath, progressFilePath, maxIterations) {
+function setUiRunning(isRunning, status, taskFilePath, progressFilePath, maxIterations, model = uiState.model, modelReasoningEffort = uiState.modelReasoningEffort) {
   updateUiState({
     isRunning,
     canEndAfterCurrent: isRunning,
     status,
     taskFilePath,
     progressFilePath,
-    maxIterations
+    maxIterations,
+    model,
+    modelReasoningEffort
   });
 }
 
@@ -720,6 +933,9 @@ function getSerializableUiState() {
     taskFilePath: uiState.taskFilePath,
     progressFilePath: uiState.progressFilePath,
     maxIterations: uiState.maxIterations,
+    model: uiState.model,
+    modelReasoningEffort: uiState.modelReasoningEffort,
+    availableModels: uiState.availableModels,
     status: uiState.status,
     isRunning: uiState.isRunning,
     canEndAfterCurrent: uiState.canEndAfterCurrent
@@ -954,4 +1170,3 @@ module.exports = {
   activate,
   deactivate
 };
-

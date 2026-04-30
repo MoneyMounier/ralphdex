@@ -112,6 +112,42 @@
           "minimum": 1,
           "description": "Maximum number of Codex iterations to run when starting the loop."
         },
+        "ralphdex.model": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Codex model to use for Ralphdex runs. Leave blank to use the CLI default."
+        },
+        "ralphdex.modelSuggestions": {
+          "type": "array",
+          "default": [
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex",
+            "gpt-5.2"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Suggested model IDs shown in the Ralphdex UI model picker."
+        },
+        "ralphdex.modelReasoningEffort": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "low",
+            "medium",
+            "high"
+          ],
+          "enumDescriptions": [
+            "Use the model's default reasoning effort.",
+            "Fastest option with the lowest reasoning effort.",
+            "Balanced speed and intelligence.",
+            "Highest reasoning effort, usually the slowest."
+          ],
+          "description": "Optional Codex reasoning effort used to trade speed for intelligence."
+        },
         "ralphdex.stopWhenNoGapRemaining": {
           "type": "boolean",
           "default": true,

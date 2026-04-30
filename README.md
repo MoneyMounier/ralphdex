@@ -20,6 +20,8 @@ The control view lets you:
 
 - choose the task file
 - set the iteration count
+- choose a Codex model
+- choose the intelligence/speed tradeoff
 - start or continue a loop
 - run one iteration
 - end after the current iteration or stop the active Codex process
@@ -43,6 +45,9 @@ For continued loops, it appends the loaded ledger under `## Last iteration outpu
 - `ralphdex.codexArgs`: arguments passed to Codex. Supports `${workspaceFolder}`, `${promptPath}`, and `${prompt}` placeholders.
 - `ralphdex.sendPromptToStdin`: send the prompt file contents over stdin. Enabled by default.
 - `ralphdex.maxIterations`: maximum iterations for `Ralphdex: Start Ralph Loop`.
+- `ralphdex.model`: optional default Codex model for Ralphdex runs.
+- `ralphdex.modelSuggestions`: model IDs suggested by the UI picker.
+- `ralphdex.modelReasoningEffort`: optional default speed/intelligence tradeoff for Codex runs.
 - `ralphdex.stopWhenNoGapRemaining`: stop when the summary reports no next gap.
 
 The default invocation is:
