@@ -25,7 +25,8 @@ The control view lets you:
 - start or continue a loop
 - run one iteration
 - end after the current iteration or stop the active Codex process
-- open the progress ledger or output channel
+- open or clear the progress ledger
+- open the output channel
 
 When you start a loop, Ralphdex asks for:
 

@@ -11,6 +11,7 @@ let controlViewProvider = undefined;
 const uiState = {
   taskFilePath: '',
   progressFilePath: '',
+  hasProgressFile: false,
   maxIterations: 5,
   model: '',
   modelReasoningEffort: '',
@@ -110,6 +111,11 @@ class RalphdexControlViewProvider {
 
     if (message.type === 'openProgress') {
       await openProgressFileFromUi();
+      return;
+    }
+
+    if (message.type === 'clearProgress') {
+      await clearProgressFileFromUi();
       return;
     }
 
@@ -315,6 +321,9 @@ function getControlViewHtml(webview) {
       <button id="runOnce" class="secondary" type="button">Run Once</button>
       <button id="openProgress" class="secondary" type="button">Progress</button>
     </section>
+    <section class="actions single">
+      <button id="clearProgress" class="secondary" type="button">Clear Progress</button>
+    </section>
 
     <div class="divider"></div>
 
@@ -343,6 +352,7 @@ function getControlViewHtml(webview) {
       continueButton: document.getElementById('continue'),
       runOnce: document.getElementById('runOnce'),
       openProgress: document.getElementById('openProgress'),
+      clearProgress: document.getElementById('clearProgress'),
       endAfterCurrent: document.getElementById('endAfterCurrent'),
       stop: document.getElementById('stop'),
       openOutput: document.getElementById('openOutput')
@@ -382,7 +392,8 @@ function getControlViewHtml(webview) {
       els.start.disabled = !hasTask || !!currentState.isRunning;
       els.continueButton.disabled = !hasTask || !!currentState.isRunning;
       els.runOnce.disabled = !hasTask || !!currentState.isRunning;
-      els.openProgress.disabled = !currentState.progressFilePath;
+      els.openProgress.disabled = !currentState.hasProgressFile;
+      els.clearProgress.disabled = !currentState.hasProgressFile || !!currentState.isRunning;
       els.endAfterCurrent.disabled = !currentState.canEndAfterCurrent;
       els.stop.disabled = !currentState.isRunning;
     }
@@ -392,6 +403,7 @@ function getControlViewHtml(webview) {
     els.continueButton.addEventListener('click', () => post('continue'));
     els.runOnce.addEventListener('click', () => post('runOnce'));
     els.openProgress.addEventListener('click', () => post('openProgress'));
+    els.clearProgress.addEventListener('click', () => post('clearProgress'));
     els.endAfterCurrent.addEventListener('click', () => post('endAfterCurrent'));
     els.stop.addEventListener('click', () => post('stop'));
     els.openOutput.addEventListener('click', () => post('openOutput'));
@@ -770,9 +782,7 @@ async function selectTaskFileForUi() {
   }
 
   const taskFilePath = selected[0].fsPath;
-  updateUiState({
-    taskFilePath,
-    progressFilePath: getProgressFilePath(taskFilePath),
+  await updateUiTaskSelection(taskFilePath, {
     status: activeRun ? uiState.status : 'Ready'
   });
 }
@@ -904,8 +914,41 @@ async function openProgressFileFromUi() {
     const document = await vscode.workspace.openTextDocument(vscode.Uri.file(uiState.progressFilePath));
     await vscode.window.showTextDocument(document, { preview: false });
   } catch (error) {
+    updateUiState({ hasProgressFile: false });
     vscode.window.showInformationMessage(`No Ralphdex progress file exists yet at ${uiState.progressFilePath}.`);
   }
+}
+
+async function clearProgressFileFromUi() {
+  if (activeRun) {
+    vscode.window.showInformationMessage('Stop the active Ralphdex run before clearing the progress ledger.');
+    return;
+  }
+
+  if (!uiState.progressFilePath) {
+    vscode.window.showInformationMessage('No Ralphdex progress file is selected yet.');
+    return;
+  }
+
+  const hasProgressFile = await fileExists(uiState.progressFilePath);
+  if (!hasProgressFile) {
+    updateUiState({ hasProgressFile: false });
+    vscode.window.showInformationMessage(`No Ralphdex progress file exists yet at ${uiState.progressFilePath}.`);
+    return;
+  }
+
+  const confirmed = await vscode.window.showWarningMessage(
+    `Clear the Ralphdex progress ledger for ${path.basename(uiState.taskFilePath)}? This deletes ${path.basename(uiState.progressFilePath)}.`,
+    { modal: true },
+    'Clear Progress'
+  );
+  if (confirmed !== 'Clear Progress') {
+    return;
+  }
+
+  await fs.unlink(uiState.progressFilePath);
+  updateUiState({ hasProgressFile: false, status: 'Ready' });
+  vscode.window.showInformationMessage(`Cleared Ralphdex progress ledger at ${uiState.progressFilePath}.`);
 }
 
 function setUiRunning(isRunning, status, taskFilePath, progressFilePath, maxIterations, model = uiState.model, modelReasoningEffort = uiState.modelReasoningEffort) {
@@ -915,6 +958,7 @@ function setUiRunning(isRunning, status, taskFilePath, progressFilePath, maxIter
     status,
     taskFilePath,
     progressFilePath,
+    hasProgressFile: !!progressFilePath,
     maxIterations,
     model,
     modelReasoningEffort
@@ -932,6 +976,7 @@ function getSerializableUiState() {
   return {
     taskFilePath: uiState.taskFilePath,
     progressFilePath: uiState.progressFilePath,
+    hasProgressFile: uiState.hasProgressFile,
     maxIterations: uiState.maxIterations,
     model: uiState.model,
     modelReasoningEffort: uiState.modelReasoningEffort,
@@ -979,6 +1024,17 @@ This file records Ralph loop continuity, iteration summaries, and known remainin
 `;
     await fs.writeFile(progressFilePath, initialContent, 'utf8');
   }
+}
+
+async function updateUiTaskSelection(taskFilePath, extraState = {}) {
+  const progressFilePath = taskFilePath ? getProgressFilePath(taskFilePath) : '';
+  const hasProgressFile = progressFilePath ? await fileExists(progressFilePath) : false;
+  updateUiState({
+    taskFilePath,
+    progressFilePath,
+    hasProgressFile,
+    ...extraState
+  });
 }
 
 async function appendProgressEntry(progressFilePath, iteration, exitCode, iterationOutput) {
